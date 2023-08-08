@@ -1,0 +1,8 @@
+.vs/
+.vscode/
+build/
+doc/
+out/
+report/coverage/
+report/unittest/index.html
+report/unittest/index.xml
