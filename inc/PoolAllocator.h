@@ -1,13 +1,19 @@
 #pragma once
 
-#include <atomic>
+#include "PoolAllocator/_pool_allocator.h"
 #include <type_traits>
 #include <cstddef>
 
 /**
  * @brief   TODO
- * 
- * TODO contrast to default allocator
+ *
+ * TODO General allocator description
+ *
+ * Unlike  std::allocator,   PoolAllocator::deallocate does not free the memory,
+ * but stores it into a memory  pool and recycles it on  a  subsequent  call  to
+ * PoolAllocator::allocate.
+ *
+ * @tparam  T   Type of the elements allocated by PoolAllocator
  */
 template <class T>
 class PoolAllocator
@@ -41,17 +47,23 @@ public:
 
     /**
      * @brief   Copy-construct PoolAllocator object
+     *
+     * @param   x   Another PoolAllocator to construct from
      */
     constexpr PoolAllocator(const PoolAllocator& x) noexcept = default;
 
     /**
-     * @copydoc PoolAllocator(const PoolAllocator&)
+     * @brief   Copy-construct PoolAllocator object
+     *
+     * @tparam  U   Element type of x
+     *
+     * @param   x   Another PoolAllocator to construct from
      */
     template <class U>
     constexpr PoolAllocator(const PoolAllocator<U>& x) noexcept;
 
     /**
-     * @brief    Destructs the PoolAllocator object
+     * @brief   Destructs the PoolAllocator object
      */
     constexpr ~PoolAllocator() = default;
 
@@ -65,11 +77,12 @@ public:
      * The storage is aligned appropriately for objects of type value_type,  but
      * they are not constructed.
      *
-     * TODO contrast to default allocator
+     * If there have been prior calls to PoolAllocator::deallocate, these blocks
+     * of storage may be reused.
      *
      * @param   n   Number of elements to be allocated.
      *
-     * @return   A pointer to the first element in the block of storage.
+     * @return  A pointer to the first element in the block of storage.
      *
      * @throws  std::bad_alloc   if the amount of storage requested could not be
      *                           allocated.
@@ -84,7 +97,8 @@ public:
      * The elements in the  array  are  not destroyed by a  call to this  member
      * function.
      *
-     * TODO contrast to default allocator
+     * Unlike std::allocator::deallocate, the memory is stored and may be reused
+     * by PoolAllocator::allocate.
      *
      * @param   p   Pointer  to  a  block of storage  previously  allocated with
      *              PoolAllocator::allocate(size_type).
@@ -100,41 +114,23 @@ public:
      * Performs a  comparison operation between  the PoolAllocator lhs  and rhs.
      * Always evaluates to true.
      *
+     * @tparam  T1   Element type of lhs
+     * @tparam  T2   Element type of rhs
+     *
      * @param   lhs,rhs   PoolAllocators to be compared
      *
      * @return  true
      */
     template <class T1, class T2>
-    friend constexpr bool operator==(const PoolAllocator<T1>&, const PoolAllocator<T2>&) noexcept;
+    friend constexpr bool operator==(const PoolAllocator<T1>& lhs, const PoolAllocator<T2>& rhs) noexcept;
 
 private:
-    union Node
-    {
-        Node* next;
-        value_type value;
-    };
-
-    class LocalPool
-    {
-    public:
-        Node* pool = nullptr;
-        ~LocalPool();
-    };
-
-    class SharedPool
-    {
-    public:
-        std::atomic<Node*> pool = nullptr;
-        ~SharedPool();
-    };
-
-    static SharedPool shared;
-    static thread_local LocalPool local;
+    _pool_allocator<T> pool;
 };
 
 template <class T>
 template <class U>
-inline constexpr PoolAllocator<T>::PoolAllocator(const PoolAllocator<U>& x) noexcept
+inline constexpr PoolAllocator<T>::PoolAllocator(const PoolAllocator<U>&) noexcept
 {
 }
 
@@ -143,33 +139,16 @@ inline constexpr typename PoolAllocator<T>::value_type* PoolAllocator<T>::alloca
 {
     if (n == 1)
     {
-        if (local.pool == nullptr)
+        pool.move_from_shared_to_local_pool();
+        value_type* p = pool.reuse_from_local_pool();
+        pool.move_from_local_to_shared_pool();
+        if (p != nullptr)
         {
-            // move nodes from shared.pool to local.pool
-            local.pool = shared.pool.load();
-            while (!shared.pool.compare_exchange_weak(local.pool, nullptr))
-            {
-            }
-        }
-
-        if (local.pool != nullptr)
-        {
-            // allocate from local.pool
-            Node* p = local.pool;
-            local.pool = p->next;
-
-            // move nodes from local.pool back to shared.pool
-            Node* null_ptr = nullptr;
-            if (shared.pool.compare_exchange_weak(null_ptr, local.pool))
-            {
-                local.pool = nullptr;
-            }
-
-            return reinterpret_cast<value_type*>(p);
+            return p;
         }
     }
 
-    return static_cast<value_type*>(::operator new(n * sizeof(value_type)));
+    return pool.allocate(n);
 }
 
 template <class T>
@@ -177,16 +156,11 @@ inline constexpr void PoolAllocator<T>::deallocate(value_type* p, size_type n)
 {
     if (n == 1)
     {
-        // add node to shared.pool
-        Node* node = reinterpret_cast<Node*>(p);
-        node->next = shared.pool.load();
-        while (!shared.pool.compare_exchange_weak(node->next, node))
-        {
-        }
+        pool.add_to_shared_pool(p);
     }
     else
     {
-        ::operator delete(static_cast<void*>(p));
+        pool.deallocate(p, n);
     }
 }
 
@@ -195,37 +169,3 @@ inline constexpr bool operator==(const PoolAllocator<T1>&, const PoolAllocator<T
 {
     return true;
 }
-
-template <class T>
-inline PoolAllocator<T>::LocalPool::~LocalPool()
-{
-    Node* null_ptr = nullptr;
-    if (!shared.pool.compare_exchange_weak(null_ptr, local.pool))
-    {
-        PoolAllocator alloc;
-        while (pool != nullptr)
-        {
-            Node* p = pool;
-            pool = p->next;
-            alloc.deallocate(reinterpret_cast<T*>(p), 1);
-        }
-    }
-}
-
-template <class T>
-inline PoolAllocator<T>::SharedPool::~SharedPool()
-{
-    Node* p = pool.load();
-    while (p != nullptr)
-    {
-        pool.compare_exchange_weak(p, p->next);
-        delete p;
-        p = pool.load();
-    }
-}
-
-template <class T>
-typename PoolAllocator<T>::SharedPool PoolAllocator<T>::shared;
-
-template <class T>
-thread_local typename PoolAllocator<T>::LocalPool PoolAllocator<T>::local;
