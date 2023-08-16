@@ -60,12 +60,10 @@ public:
     template <class U>
     constexpr AlignedAllocator(const AlignedAllocator<U, N>& x) noexcept;
 
-#if __cplusplus >= 202002L
     /**
      * @brief   Destructs the AlignedAllocator object
      */
     constexpr ~AlignedAllocator() = default;
-#endif
 
     /**
      * @brief   Allocate block of storage
@@ -105,12 +103,13 @@ public:
     /**
      * @brief   Compares the AlignedAllocators lhs and rhs
      *
-     * Performs a comparison operation between the AlignedAllocator lhs and rhs. TODO when is it true?
+     * Performs a comparison operation between the AlignedAllocator lhs and rhs.
+     * Evaluates to true, if N1 is equal to N2.
      *
-     * @tparam  T1   TODO
-     * @tparam  N1   TODO
-     * @tparam  T2   TODO
-     * @tparam  N2   TODO
+     * @tparam  T1   Element type of lhs
+     * @tparam  N1   Alignment of lhs
+     * @tparam  T2   Element type of rhs
+     * @tparam  N2   Alignment of rhs
      *
      * @param   lhs,rhs   AlignedAllocatorss to be compared
      *
@@ -119,26 +118,6 @@ public:
      */
     template <class T1, size_t N1, class T2, size_t N2>
     friend constexpr bool operator==(const AlignedAllocator<T1, N1>& lhs, const AlignedAllocator<T2, N2>& rhs) noexcept;
-
-#if __cplusplus < 202002L
-    /**
-     * @brief   Compares the AlignedAllocators lhs and rhs
-     *
-     * Performs a comparison operation between the AlignedAllocator lhs and rhs. TODO when is it true?
-     *
-     * @tparam  T1   TODO
-     * @tparam  N1   TODO
-     * @tparam  T2   TODO
-     * @tparam  N2   TODO
-     *
-     * @param   lhs,rhs   AlignedAllocatorss to be compared
-     *
-     * @return  true,  if (N1 != N2)
-     *          false, otherwise
-     */
-    template <class T1, size_t N1, class T2, size_t N2>
-    friend constexpr bool operator!=(const AlignedAllocator<T1, N1>& lhs, const AlignedAllocator<T2, N2>& rhs) noexcept;
-#endif
 };
 
 template <class T, size_t N>
@@ -150,13 +129,13 @@ inline constexpr AlignedAllocator<T, N>::AlignedAllocator(const AlignedAllocator
 template <class T, size_t N>
 inline constexpr typename AlignedAllocator<T, N>::value_type* AlignedAllocator<T, N>::allocate(size_type n)
 {
-    return static_cast<value_type*>(operator new(n * sizeof(value_type), static_cast<std::align_val_t>(N)));
+    return static_cast<value_type*>(::operator new(n * sizeof(value_type), static_cast<std::align_val_t>(N)));
 }
 
 template <class T, size_t N>
 inline constexpr void AlignedAllocator<T, N>::deallocate(value_type* p, size_type n)
 {
-    operator delete(static_cast<void*>(p), n * sizeof(value_type), static_cast<std::align_val_t>(N));
+    ::operator delete(static_cast<void*>(p), n * sizeof(value_type), static_cast<std::align_val_t>(N));
 }
 
 template <class T1, size_t N1, class T2, size_t N2>
@@ -164,11 +143,3 @@ inline constexpr bool operator==(const AlignedAllocator<T1, N1>&, const AlignedA
 {
     return N1 == N2;
 }
-
-#if __cplusplus < 202002L
-template <class T1, size_t N1, class T2, size_t N2>
-inline constexpr bool operator!=(const AlignedAllocator<T1, N1>& lhs, const AlignedAllocator<T2, N2>& rhs) noexcept
-{
-    return !(lhs == rhs);
-}
-#endif
